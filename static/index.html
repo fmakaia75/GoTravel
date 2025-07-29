@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>TravelEase - Voyagez en toute sérénité</title>
+
+  <!-- TailwindCSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- jQuery -->
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+    * { font-family: 'Inter', sans-serif; }
+    #map {
+            z-index:0;
+    }
+    .leaflet-pane{
+            z-index:0;
+    }
+    .autocomplete-results {
+      position: absolute; top: 100%; left: 0; right: 0; z-index: 50;
+      margin-top: 0.5rem; max-height: 12rem; overflow-y: auto;
+      backdrop-filter: blur(16px) saturate(180%);
+      background-color: rgba(255, 255, 255, 0.95);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 0.5rem;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+      display: none;
+      z-index:1;
+    }
+
+    .autocomplete-result {
+      padding: 1rem; cursor: pointer;
+      border-bottom: 1px solid #f3f4f6;
+    }
+
+    .autocomplete-result:hover { background-color: #f0fdf4; }
+
+    .search-button {
+      background: linear-gradient(135deg, #8b5cf6 0%, #a855f7 50%, #ec4899 100%);
+      transition: all 0.3s ease;
+    }
+
+    .search-button:hover {
+      background: linear-gradient(135deg, #7c3aed 0%, #9333ea 50%, #db2777 100%);
+      transform: scale(1.02);
+      box-shadow: 0 25px 50px -12px rgba(139, 92, 246, 0.25);
+    }
+
+    .search-button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .date-input {
+      background: rgba(255, 255, 255, 0.2);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      color: white;
+    }
+
+    .date-input::-webkit-calendar-picker-indicator {
+      filter: invert(1);
+      opacity: 0.7;
+    }
+  </style>
+  <script src="https://unpkg.com/leaflet-curve"></script>
+</head>
+
+<body class="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
+  <!-- 🔗 Navbar -->
+  <nav class="bg-white/10 backdrop-blur-lg border-b border-white/20 shadow-xl sticky top-0 z-40 w-full">
+    <div class="container mx-auto px-4 py-4">
+      <div class="flex flex-wrap items-center gap-4">
+        <!-- Departure -->
+        <div class="relative flex-1 min-w-[200px]" id="from-container">
+          <input type="text" id="from" class="w-full p-3 rounded-lg bg-white/20 text-white placeholder:text-gray-300" placeholder="Ville de départ" autocomplete="off">
+          <div id="from-results" class="autocomplete-results"></div>
+        </div>
+
+        <!-- Arrival -->
+        <div class="relative flex-1 min-w-[200px]" id="to-container">
+          <input type="text" id="to" class="w-full p-3 rounded-lg bg-white/20 text-white placeholder:text-gray-300" placeholder="Ville d'arrivée" autocomplete="off">
+          <div id="to-results" class="autocomplete-results"></div>
+        </div>
+
+        <!-- Date -->
+        <div class="min-w-[160px]">
+          <input type="date" id="departure-date" class="date-input w-full p-3 rounded-lg" required>
+        </div>
+
+        <!-- Return Date -->
+        <div id="return-date-container" class="min-w-[160px]" style="display: none;">
+          <input type="date" id="return-date" class="date-input w-full p-3 rounded-lg">
+        </div>
+
+        <!-- Checkbox -->
+        <div class="flex items-center gap-2">
+          <input type="checkbox" id="return-trip" class="w-4 h-4 accent-purple-500 rounded">
+          <label for="return-trip" class="text-white text-sm font-medium cursor-pointer">Aller-retour</label>
+        </div>
+
+        <!-- Search -->
+        <div>
+          <button id="search-btn" class="search-button px-6 py-3 text-white font-bold rounded-lg">Rechercher</button>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <!-- 🔁 Page Layout -->
+  <div class="flex h-[calc(100vh-80px)]">
+
+    <!-- 📋 Side Panel -->
+    <div class="w-[400px] bg-white/10 backdrop-blur-lg border-r border-white/20 p-6 overflow-y-auto text-white space-y-6 hidden" id="results-panel">
+      <h2 class="text-2xl font-bold mb-4">Résultats</h2>
+      <div id="results"></div>
+    </div>
+
+    <!-- 🗺️ Map Area -->
+    <div id="map" class="flex-1"></div>
+  </div>
+
+  <!-- 🧠 JavaScript -->
+  <script>
+    function setupAutocomplete(inputId, resultDivId) {
+      $('#' + inputId).on('input', function () {
+        let query = $(this).val();
+        if (query.length < 2) {
+          $('#' + resultDivId).hide().empty();
+          return;
+        }
+
+        $.getJSON('/search_stops?q=' + encodeURIComponent(query), function (data) {
+          let html = '';
+          data.forEach(stop => {
+            html += `<div class="autocomplete-result" data-id="${stop.id}" data-name="${stop.name}">${stop.name}</div>`;
+          });
+          $('#' + resultDivId).html(html).show();
+        });
+      });
+
+      $('#' + resultDivId).on('click', '.autocomplete-result', function () {
+        let name = $(this).data('name');
+        let id = $(this).data('id');
+        $('#' + inputId).val(name).data('stop-id', id);
+        $('#' + resultDivId).hide().empty();
+      });
+
+      $(document).on('click', function (e) {
+        if (!$(e.target).closest('#' + inputId + ', #' + resultDivId).length) {
+          $('#' + resultDivId).hide();
+        }
+      });
+    }
+
+    function setMinDate() {
+      const today = new Date().toISOString().split('T')[0];
+      $('#departure-date, #return-date').attr('min', today);
+    }
+
+    function updateReturnDateMin() {
+      const departureDate = $('#departure-date').val();
+      if (departureDate) {
+        $('#return-date').attr('min', departureDate);
+      }
+    }
+
+    $(function () {
+      setupAutocomplete('from', 'from-results');
+      setupAutocomplete('to', 'to-results');
+      setMinDate();
+
+      $('#return-trip').change(function () {
+        $('#return-date-container').toggle(this.checked);
+        if (!this.checked) $('#return-date').val('');
+      });
+
+      $('#departure-date').change(updateReturnDateMin);
+
+      $('#search-btn').click(function () {
+        const fromID = $('#from').data('stop-id');
+        const toID = $('#to').data('stop-id');
+        const departureDate = $('#departure-date').val();
+        const returnDate = $('#return-date').val();
+        const isReturnTrip = $('#return-trip').is(':checked');
+
+        if (!fromID || !toID || !departureDate) {
+          $('#results-panel').removeClass('hidden');
+          $('#results').html('<div class="text-red-400 text-center">Veuillez remplir les champs correctement.</div>');
+          return;
+        }
+
+        if (isReturnTrip && !returnDate) {
+          $('#results-panel').removeClass('hidden');
+          $('#results').html('<div class="text-red-400 text-center">Sélectionnez une date de retour.</div>');
+          return;
+        }
+
+        $('#results-panel').removeClass('hidden');
+        $('#results').html('<div class="text-center text-white">Chargement du trajet...</div>');
+
+        let queryParams = `from=${encodeURIComponent(fromID)}&to=${encodeURIComponent(toID)}&departure_date=${encodeURIComponent(departureDate)}`;
+        if (isReturnTrip && returnDate) queryParams += `&return_date=${encodeURIComponent(returnDate)}`;
+
+        $.getJSON(`/find_path?${queryParams}`, function (data) {
+          const outboundPath = data.outbound_path || data.path;
+          if (!outboundPath || outboundPath.length === 0) {
+            $('#results').html('<div class="text-center text-gray-400">Aucun trajet trouvé.</div>');
+            return;
+          }
+
+                let html = `<h3 class="text-xl font-bold mb-4">🚀 ${isReturnTrip ? 'Trajet Aller' : 'Votre Trajet'}</h3>`;
+                console.log(outboundPath)
+
+          outboundPath.forEach((path, index) => {
+            const step = path.edge;
+            html += `
+              <div class="bg-white/10 p-4 rounded-lg mb-4">
+                <h4 class="font-semibold text-lg mb-1">Étape ${index + 1}</h4>
+                <p><strong>De :</strong> ${step.departure_stop.Name} → ${step.arrival_stop.Name}</p>
+                <p><strong>Départ :</strong> ${step.departure_time} — <strong>Arrivée :</strong> ${step.arrival_time}</p>
+                <p><strong>Voyage :</strong> ${step.trip_id}</p>
+                <p><strong>Durée :</strong> ${path.total_duration}</p>
+              </div>`;
+          });
+
+          if (data.return_path && data.return_path.length > 0) {
+            html += `<h3 class="text-xl font-bold mb-4">🏠 Trajet Retour</h3>`;
+            data.return_path.forEach((path, index) => {
+              const step = path.edge;
+              html += `
+                <div class="bg-white/10 p-4 rounded-lg mb-4">
+                  <h4 class="font-semibold text-lg mb-1">Étape ${index + 1}</h4>
+                  <p><strong>De :</strong> ${step.departure_stop.Name} → ${step.arrival_stop.Name}</p>
+                  <p><strong>Départ :</strong> ${step.departure_time} — <strong>Arrivée :</strong> ${step.arrival_time}</p>
+                  <p><strong>Voyage :</strong> ${step.trip_id}</p>
+                  <p><strong>Durée :</strong> ${path.total_duration}</p>
+                </div>`;
+            });
+          }
+
+          $('#results').html(html);
+                if(outboundPath){
+                        const dep = outboundPath[0].edge.departure_stop 
+                        const arr = outboundPath[0].edge.arrival_stop 
+                        const bounds = [
+                                [dep.Lat, dep.Lon],
+                                [arr.Lat, arr.Lon]
+                        ]
+                        L.marker([dep.Lat, dep.Lon]).addTo(map);
+                        L.marker([arr.Lat, arr.Lon]).addTo(map);
+                        
+                        map.fitBounds(bounds, { padding: [50, 50] });
+                }
+        }).fail(function () {
+          $('#results').html('<div class="text-red-400 text-center">Erreur lors de la récupération des données.</div>');
+        });
+      });
+
+      // Initialize Leaflet Map
+      var map = L.map('map').setView([48.8566, 2.3522], 12); // Paris
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '© OpenStreetMap'
+            }).addTo(map);
+    });
+  </script>
+</body>
+</html>
